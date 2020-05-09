@@ -1,10 +1,57 @@
 //数据响应式
+
+function handlerArray(array) {
+  // 获取原生数组的prototype
+  const proto = Array.prototype;
+
+  const newArray = Object.create(proto);
+
+  const resetArrayFun = ["push", "shift", "unshift", "pop", "splice"];
+  resetArrayFun.forEach(fun => {
+    // args是个数组
+    array[fun] = function(...args) {
+      console.log("update view");
+      newArray[fun].call(this, ...args);
+      // 如果是新增操作，那么就要保证新增对象也会被监听
+      let inserts;
+      switch (fun) {
+        case "push":
+        case "unshift":
+          inserts = args;
+          break;
+        case "splice":
+          inserts = args.slice(2);
+          break;
+        default:
+          break;
+      }
+      // 监听args数组
+      observeArray(args);
+    }
+  }) 
+}
+
+function observeArray(array) {
+  // 遍历数组，如果数组里面有对象，则监听
+  for(let i = 0; i < array.length; i++) {
+    observe(array[i]);
+  }
+  // 数组有push, shift, unshift, pop, splice等对数组长度进行操作的函数
+  handlerArray(array);
+}
+
+
 function observe(obj) {
   if(typeof obj !== "object" || obj == null) return;
 
-  Object.keys(obj).forEach(key => {
-    defineReactive(obj, key, obj[key]);
-  })
+  // 对数组的响应式监听
+  if(Array.isArray(obj)) {
+    observeArray(obj);
+  } else {
+    Object.keys(obj).forEach(key => {
+      defineReactive(obj, key, obj[key]);
+    })
+  }
 }
 
 
@@ -67,7 +114,7 @@ class Compile {
         // k-text/k-html指令
         this.createElement(node)
       } else if(node.nodeType === 3 && /\{\{(.*)\}\}/.test(node.nodeValue)) {
-        this.createText(node);
+        this.createText(node, RegExp.$1);
       }
 
       if(node.childNodes) {
@@ -98,14 +145,15 @@ class Compile {
     }
   }
 
-  createText(node) {
-    this.update(node, RegExp.$1, "text");
+  createText(node, exp) {
+    this.update(node, exp, "text");
   }
 
-  update(node, value, dir) {
+  update(node, key, dir) {
     const fn = this[dir + "Updater"];
-    fn && fn(node, this.vm[value]);
-    new Watcher(this.vm, value, (value) => {
+    const resultVal = getVmValue(this.vm, key);
+    fn && fn(node, resultVal);
+    new Watcher(this.vm, key, (value) => {
       fn && fn(node, value);
     });
   }
@@ -115,7 +163,11 @@ class Compile {
   }
 
   textUpdater(node, value) {
-    node.textContent = value;
+    if(typeof value === "object") {
+      node.textContent = JSON.stringify(value);
+    } else {
+      node.textContent = value;
+    }
   }
 }
 
@@ -127,13 +179,25 @@ class Watcher {
     this.fn = fn;
 
     Dep.target = this;
-    this.vm[this.key];
+    getVmValue(this.vm, this.key);
+    // this.vm[this.key];
     Dep.target = null;
   }
 
   update() {
-    this.fn.call(this.vm, this.vm[this.key])
+    const resultVal = getVmValue(this.vm, this.key);
+    this.fn.call(this.vm, resultVal);
   }
+}
+
+// handler deep nest object or array
+function getVmValue(vm, exp) {
+  return _.get(vm, exp);
+  // if(isObj && /(.*)\[(.*)\]/.test(exp)) {
+  //   return vm[RegExp.$1][RegExp.$2];
+  // } else {
+  //   return vm[exp];
+  // }
 }
 
 // 一个Dep管理key相同的watcher, 每个watcher对应模板中每一个变量，这样某个key的值发生改变，只会update对应的模板
